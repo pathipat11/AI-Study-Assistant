@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}AI Study Chatbot{% endblock %}
+
+{% block content %}
+<div class="h-screen grid grid-cols-12">
+    {% include "partials/sidebar.html" %}
+
+    <main class="col-span-12 md:col-span-8 lg:col-span-9 flex flex-col">
+        {% include "partials/topbar.html" %}
+
+        <div class="px-4 py-3 flex gap-2 items-center">
+            <button id="btnCopy"
+                class="rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 px-3 py-2 text-sm">
+                Copy
+            </button>
+            <button id="btnPdf"
+                class="rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 px-3 py-2 text-sm">
+                Export PDF
+            </button>
+            <div id="status" class="ml-auto text-sm text-slate-500 dark:text-slate-400"></div>
+        </div>
+
+        <div id="chat" class="flex-1 overflow-auto px-4 pb-4 space-y-3"></div>
+
+        <div class="border-t border-slate-200 dark:border-slate-800 p-4 flex gap-2 bg-white dark:bg-slate-950">
+            <input id="msg"
+                class="flex-1 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 px-4 py-3"
+                placeholder="Ask a question..." />
+            <button id="btnSend"
+                class="rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-3 font-semibold">
+                Send
+            </button>
+        </div>
+    </main>
+</div>
+{% endblock %}
