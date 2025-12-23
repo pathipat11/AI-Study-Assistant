@@ -1,56 +1,66 @@
 from io import BytesIO
 from reportlab.lib.pagesizes import A4
-from reportlab.pdfgen import canvas
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+
+# ✅ ฟอนต์ Unicode (รองรับภาษาไทย)
+pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
 
 def chat_to_pdf_bytes(title: str, messages: list[dict]) -> bytes:
     buf = BytesIO()
-    c = canvas.Canvas(buf, pagesize=A4)
-    width, height = A4
-    x, y = 40, height - 50
 
-    def draw_wrapped(text, font="Helvetica", size=11, gap=14):
-        nonlocal y
-        c.setFont(font, size)
-        max_w = width - 80
-        for paragraph in text.split("\n"):
-            line = paragraph.strip()
-            if not line:
-                y -= 8
-                continue
-            words = line.split(" ")
-            cur = ""
-            for w in words:
-                test = (cur + " " + w).strip()
-                if c.stringWidth(test, font, size) < max_w:
-                    cur = test
-                else:
-                    c.drawString(x, y, cur)
-                    y -= gap
-                    cur = w
-            if cur:
-                c.drawString(x, y, cur)
-                y -= gap
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=A4,
+        leftMargin=40,
+        rightMargin=40,
+        topMargin=50,
+        bottomMargin=40,
+    )
 
-            if y < 60:
-                c.showPage()
-                y = height - 50
+    styles = getSampleStyleSheet()
 
-    c.setFont("Helvetica-Bold", 16)
-    c.drawString(x, y, title[:90])
-    y -= 26
+    styles["Normal"].fontName = "STSong-Light"
+    styles["Normal"].fontSize = 11
+    styles["Normal"].leading = 16
+
+    styles.add(
+        ParagraphStyle(
+            name="TitleStyle",
+            fontName="STSong-Light",
+            fontSize=16,
+            leading=20,
+            spaceAfter=14,
+        )
+    )
+
+    styles.add(
+        ParagraphStyle(
+            name="RoleStyle",
+            fontName="STSong-Light",
+            fontSize=12,
+            leading=16,
+            spaceBefore=10,
+            spaceAfter=4,
+            textColor="#1f2937",  # slate-800
+        )
+    )
+
+    story = []
+
+    # Title
+    story.append(Paragraph(title, styles["TitleStyle"]))
+    story.append(Spacer(1, 12))
 
     for m in messages:
-        role = m.get("role", "user")
-        content = m.get("content", "")
-        label = "User" if role == "user" else "Assistant"
-        draw_wrapped(f"{label}:", font="Helvetica-Bold", size=12)
-        draw_wrapped(content, font="Helvetica", size=11)
-        y -= 6
+        role = "User" if m.get("role") == "user" else "Assistant"
+        content = (m.get("content") or "").replace("\n", "<br/>")
 
-        if y < 60:
-            c.showPage()
-            y = height - 50
+        story.append(Paragraph(f"<b>{role}:</b>", styles["RoleStyle"]))
+        story.append(Paragraph(content, styles["Normal"]))
+        story.append(Spacer(1, 10))
 
-    c.showPage()
-    c.save()
+    doc.build(story)
     return buf.getvalue()

@@ -107,6 +107,18 @@
     .dark .chatgpt-md .md-copy:hover {
         background: rgba(2, 6, 23, 0.75);
     }
+
+    /* ===== AI bubble hover actions ===== */
+    .ai-bubble .ai-actions {
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.15s ease;
+    }
+
+    .ai-bubble:hover .ai-actions {
+        opacity: 1;
+        pointer-events: auto;
+    }
 </style>
 
 

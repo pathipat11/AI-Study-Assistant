@@ -145,31 +145,50 @@ function copyChat() {
  * Event bindings
  * ------------------------- */
 function bindEvents() {
-    qs("btnSend").addEventListener("click", sendMessageStream);
-    qs("msg").addEventListener("keydown", (e) => {
-        if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            sendMessageStream();
-        }
-    });
-
-
-    qs("btnNew").addEventListener("click", createNewSession);
-    qs("btnRename").addEventListener("click", renameActiveSession);
-    qs("btnDelete").addEventListener("click", deleteActiveSession);
-
-    qs("btnCopy").addEventListener("click", copyChat);
-    qs("btnPdf").addEventListener("click", exportPdf);
-
-    qs("search").addEventListener("input", renderSessions);
-
-    // Sidebar: click session (event delegation)
     qs("sessions").addEventListener("click", (e) => {
-        const btn = e.target.closest("button[data-session-id]");
-        if (!btn) return;
-        switchSession(btn.dataset.sessionId);
+        const menuBtn = e.target.closest('[data-action="menu"]');
+        const renameBtn = e.target.closest('[data-action="rename"]');
+        const deleteBtn = e.target.closest('[data-action="delete"]');
+        const item = e.target.closest('[data-session-id]');
+
+        if (!item) return;
+
+        const sessionId = item.dataset.sessionId;
+
+        // 1️⃣ กด ⋯ → toggle menu
+        if (menuBtn) {
+            e.stopPropagation();
+            const menu = item.querySelector("[data-menu]");
+            menu.classList.toggle("hidden");
+            return;
+        }
+
+        // 2️⃣ Rename
+        if (renameBtn) {
+            e.stopPropagation();
+            setActiveSessionId(sessionId);
+            renameActiveSession();
+            return;
+        }
+
+        // 3️⃣ Delete
+        if (deleteBtn) {
+            e.stopPropagation();
+            setActiveSessionId(sessionId);
+            deleteActiveSession();
+            return;
+        }
+
+        // 4️⃣ คลิกพื้นที่อื่น = switch ห้อง
+        switchSession(sessionId);
     });
 }
+
+document.addEventListener("click", () => {
+    document
+        .querySelectorAll("[data-menu]:not(.hidden)")
+        .forEach(m => m.classList.add("hidden"));
+});
 
 
 /* -------------------------

@@ -1,34 +1,24 @@
 <header
     class="border-b border-slate-200 dark:border-slate-800 bg-white/70 dark:bg-slate-950/30 backdrop-blur px-4 py-3 flex items-center gap-3">
+
     <div class="flex-1 min-w-0">
         <div id="activeTitle" class="font-semibold truncate">—</div>
         <div id="activeMeta" class="text-xs text-slate-500 dark:text-slate-400 truncate">—</div>
     </div>
 
     <span id="themeBadge"
-        class="hidden sm:inline text-xs px-2 py-1 rounded-full border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300">
+        class="hidden sm:inline text-xs px-2 py-1 rounded-full border border-slate-200 dark:border-slate-700">
         —
     </span>
 
-    <button id="btnTheme"
-        class="rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 px-3 py-2 text-sm"
-        aria-pressed="true" onclick="window.__theme.toggleTheme()">
+    <button id="btnTheme" class="rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 px-3 py-2 text-sm"
+        onclick="window.__theme.toggleTheme()">
         Toggle
     </button>
 
-    <select id="level"
-        class="rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm">
+    <select id="level" class="rounded-xl bg-slate-50 dark:bg-slate-900 border px-3 py-2 text-sm">
         <option value="beginner">Beginner</option>
         <option value="intermediate">Intermediate</option>
         <option value="advanced">Advanced</option>
     </select>
-
-    <button id="btnRename"
-        class="rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 px-3 py-2 text-sm">
-        Rename
-    </button>
-    <button id="btnDelete"
-        class="rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 px-3 py-2 text-sm">
-        Delete
-    </button>
 </header>
