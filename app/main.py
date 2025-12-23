@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
-from .db import get_db
+from .db import get_db, SessionLocal
 from .models import ChatSession, ChatMessage
 from .init_db import init_db
 from .gemini_client import chat_reply, chat_reply_stream, generate_chat_title
@@ -21,6 +21,13 @@ templates = Jinja2Templates(directory="app/templates")
 @app.on_event("startup")
 def on_startup():
     init_db()
+
+def sse_data(text: str) -> str:
+    # SSE ต้อง prefix data: ทุกบรรทัด
+    lines = (text or "").splitlines()
+    if not lines:
+        return "data:\n\n"
+    return "".join(f"data: {line}\n" for line in lines) + "\n"
 
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
@@ -217,36 +224,139 @@ def regenerate(session_id: int, db: Session = Depends(get_db)):
 def chat_stream(session_id: int, payload: dict, db: Session = Depends(get_db)):
     user_text = (payload.get("message") or "").strip()
     level = payload.get("level", "beginner")
-
     if not user_text:
         raise HTTPException(400, "Empty message")
 
+    # ✅ validate session + save user msg ด้วย db (อันนี้ทำก่อน stream ได้)
     s = db.query(ChatSession).filter(ChatSession.id == session_id).first()
     if not s:
         raise HTTPException(404, "Session not found")
 
-    # save user message
     db.add(ChatMessage(session_id=session_id, role="user", content=user_text))
     db.commit()
 
-    # context
+    # ✅ context (ทำก่อน stream)
     recent = (
         db.query(ChatMessage)
         .filter(ChatMessage.session_id == session_id)
-        .order_by(ChatMessage.created_at.desc())
+        .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
         .limit(20)
         .all()
     )
     recent = list(reversed(recent))
     context = [{"role": m.role, "content": m.content} for m in recent]
 
+    # ✅ auto-title สำหรับ stream: ถ้าเป็นข้อความแรกของห้อง และ title ยัง default
+    DEFAULT_TITLES = {"New Chat", "Study Chat"}
+    try:
+        total = db.query(ChatMessage).filter(ChatMessage.session_id == session_id).count()
+        if total == 1 and (s.title in DEFAULT_TITLES):
+            new_title = generate_chat_title(user_text)
+            s.title = (new_title or "Study Chat")[:200]
+            db.commit()
+    except Exception:
+        db.rollback()
+
     def event_generator():
         full = ""
-        for chunk in chat_reply_stream(context, level):
-            full += chunk
-            yield f"data: {chunk}\n\n"
-        # save assistant message after stream end
-        db.add(ChatMessage(session_id=session_id, role="assistant", content=full))
-        db.commit()
+        try:
+            for chunk in chat_reply_stream(context, level):
+                if not chunk:
+                    continue
+                full += chunk
+                yield sse_data(chunk)  # ✅ prefix data: ทุกบรรทัด + จบ event ด้วย blank line
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+            # ✅ สำคัญ: ใช้ Session ใหม่ตอนบันทึก (ห้ามใช้ db เดิมใน generator)
+            db2 = SessionLocal()
+            try:
+                db2.add(ChatMessage(session_id=session_id, role="assistant", content=full))
+                db2.commit()
+            finally:
+                db2.close()
+
+            yield "event: done\ndata: ok\n\n"
+        except Exception as e:
+            # ✅ stream error ก็ส่ง event: error ไปให้ฝั่งหน้าเว็บรู้
+            yield f"event: error\ndata: {str(e)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.post("/api/sessions/{session_id}/regenerate/stream")
+def regenerate_stream(session_id: int, db: Session = Depends(get_db)):
+    s = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    if not s:
+        raise HTTPException(404, "Session not found")
+
+    # ✅ ดึงล่าสุด (ใหม่ -> เก่า)
+    messages = (
+        db.query(ChatMessage)
+        .filter(ChatMessage.session_id == session_id)
+        .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+        .all()
+    )
+
+    last_user = next((m for m in messages if m.role == "user"), None)
+    last_assistant = next((m for m in messages if m.role == "assistant"), None)
+
+    if not last_user:
+        raise HTTPException(400, "No user message to regenerate")
+
+    # ✅ อย่าลบ assistant ก่อน stream (ถ้า stream fail จะหาย)
+    # context ใช้ 20 ข้อความล่าสุด (ยังมี assistant เก่าอยู่ก็ไม่เป็นไร)
+    recent = (
+        db.query(ChatMessage)
+        .filter(ChatMessage.session_id == session_id)
+        .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+        .limit(20)
+        .all()
+    )
+    recent = list(reversed(recent))
+    context = [{"role": m.role, "content": m.content} for m in recent]
+
+    def event_gen():
+        full = ""
+        try:
+            for chunk in chat_reply_stream(context, level="beginner"):
+                if not chunk:
+                    continue
+                full += chunk
+                yield sse_data(chunk)
+
+            # ✅ stream สำเร็จค่อย “replace” ใน Session ใหม่แบบ atomic
+            db2 = SessionLocal()
+            try:
+                # ลบ assistant เก่าล่าสุด (ถ้ามี)
+                if last_assistant:
+                    obj = db2.query(ChatMessage).filter(ChatMessage.id == last_assistant.id).first()
+                    if obj:
+                        db2.delete(obj)
+                        db2.flush()
+
+                # insert assistant ใหม่
+                db2.add(ChatMessage(session_id=session_id, role="assistant", content=full))
+                db2.commit()
+            finally:
+                db2.close()
+
+            yield "event: done\ndata: ok\n\n"
+        except Exception as e:
+            yield f"event: error\ndata: {str(e)}\n\n"
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

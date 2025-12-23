@@ -2,11 +2,11 @@ import {
     apiListSessions,
     apiCreateSession,
     apiGetMessages,
-    apiChat,
     apiRenameSession,
     apiDeleteSession,
     apiExportPdf,
     apiRegenerate,
+    apiRegenerateStream,
 } from "./api.js";
 
 import { state, setActiveSessionId, clearActiveSessionId } from "./state.js";
@@ -74,43 +74,6 @@ async function createNewSession() {
     await loadHistory();
 
     setStatus("New chat ✅");
-}
-
-async function sendMessage() {
-    const input = qs("msg");
-    const text = input.value.trim();
-    if (!text) return;
-
-    await ensureSession();
-    input.value = "";
-
-    // optimistic UI (แสดง user message ก่อน)
-    state.messages.push({ role: "user", content: text });
-    renderChat();
-    setStatus("Thinking...");
-
-    try {
-        const level = qs("level").value;
-        const data = await apiChat(state.activeSessionId, text, level);
-
-        // ✅ Auto title: backend ส่ง session_title มา
-        if (data.session_title) {
-            await refreshSessions();
-        }
-
-        state.messages.push({
-            role: "assistant",
-            content: data.reply,
-        });
-
-        renderChat();
-        await refreshSessions();
-
-        setStatus("Done ✅");
-    } catch (err) {
-        console.error(err);
-        setStatus("Error: " + err.message);
-    }
 }
 
 async function renameActiveSession() {
@@ -184,8 +147,12 @@ function copyChat() {
 function bindEvents() {
     qs("btnSend").addEventListener("click", sendMessageStream);
     qs("msg").addEventListener("keydown", (e) => {
-        if (e.key === "Enter") sendMessage();
+        if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            sendMessageStream();
+        }
     });
+
 
     qs("btnNew").addEventListener("click", createNewSession);
     qs("btnRename").addEventListener("click", renameActiveSession);
@@ -209,34 +176,84 @@ function bindEvents() {
  * Regenerate last assistant message
  * ------------------------- */
 
-async function regenerate() {
+async function regenerateStream() {
     if (!state.activeSessionId) return;
 
     setStatus("Regenerating...");
 
-    // ลบ assistant ล่าสุดจาก state
+    // ลบ assistant ล่าสุด
     for (let i = state.messages.length - 1; i >= 0; i--) {
         if (state.messages[i].role === "assistant") {
             state.messages.splice(i, 1);
             break;
         }
     }
+
+    const assistant = { role: "assistant", content: "", streaming: true };
+    state.messages.push(assistant);
     renderChat();
 
     try {
-        const data = await apiRegenerate(state.activeSessionId);
+        const res = await apiRegenerateStream(state.activeSessionId);
 
-        state.messages.push({
-            role: "assistant",
-            content: data.reply,
-        });
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        let buffer = "";
 
+        while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+
+            let idx;
+            while ((idx = buffer.indexOf("\n\n")) !== -1) {
+                const raw = buffer.slice(0, idx);
+                buffer = buffer.slice(idx + 2);
+
+                if (raw.startsWith("event: done")) {
+                    assistant.streaming = false;
+                    renderChat();
+                    setStatus("Done ✅");
+                    await refreshSessions();
+                    return;
+                }
+
+                if (raw.startsWith("event: error")) {
+                    const msg = raw
+                        .split("\n")
+                        .find((l) => l.startsWith("data:"))
+                        ?.replace("data:", "")
+                        .trim() || "Streaming error";
+                    throw new Error(msg);
+                }
+
+                const dataLines = raw
+                    .split("\n")
+                    .filter((l) => l.startsWith("data:"))
+                    .map((l) => l.replace("data:", "").trimStart());
+
+                if (dataLines.length) {
+                    assistant.content += dataLines.join("\n");
+                    renderChat();
+                }
+            }
+        }
+
+        // ✅ เผื่อ backend ไม่ส่ง event: done
+        assistant.streaming = false;
         renderChat();
         setStatus("Done ✅");
+        await refreshSessions();
     } catch (e) {
+        assistant.streaming = false;
+        renderChat();
         setStatus("Error: " + e.message);
     }
 }
+
+
+
 
 async function sendMessageStream() {
     const input = qs("msg");
@@ -246,12 +263,12 @@ async function sendMessageStream() {
     await ensureSession();
     input.value = "";
 
-    // user bubble
+    // user
     state.messages.push({ role: "user", content: text });
     renderChat();
 
     // assistant placeholder
-    const assistant = { role: "assistant", content: "" };
+    const assistant = { role: "assistant", content: "", streaming: true };
     state.messages.push(assistant);
     renderChat();
 
@@ -267,18 +284,37 @@ async function sendMessageStream() {
     );
 
     const reader = res.body.getReader();
-    const decoder = new TextDecoder();
+    const decoder = new TextDecoder("utf-8");
+    let buffer = "";
 
     while (true) {
         const { value, done } = await reader.read();
         if (done) break;
 
-        const chunk = decoder.decode(value);
-        assistant.content += chunk.replace(/^data:\s?/gm, "");
-        renderChat();
+        buffer += decoder.decode(value, { stream: true });
+
+        let idx;
+        while ((idx = buffer.indexOf("\n\n")) !== -1) {
+            const rawEvent = buffer.slice(0, idx);
+            buffer = buffer.slice(idx + 2);
+
+            const dataLines = rawEvent
+                .split("\n")
+                .filter(l => l.startsWith("data:"))
+                .map(l => l.replace("data:", "").trimStart());
+
+            if (dataLines.length) {
+                assistant.content += dataLines.join("\n");
+                renderChat();
+            }
+        }
     }
 
+    assistant.streaming = false;
+    renderChat();
+
     setStatus("Done ✅");
+    await refreshSessions();
 }
 
 
@@ -291,7 +327,8 @@ async function init() {
 
     // sync theme badge (dark/light)
     window.__theme?.updateThemeUI?.();
-    window.__chat = { regenerate };
+    window.__chat = { regenerateStream };
+
 
     await refreshSessions();
     await ensureSession();

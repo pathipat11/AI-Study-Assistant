@@ -54,17 +54,33 @@ User message: {first_user_message}
     title = title.splitlines()[0].strip()
     return title[:60] or "Study Chat"
 
-def chat_reply_stream(context, level="beginner"):
+def chat_reply_stream(messages: list[dict], level: str = "beginner"):
     api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError("Missing GEMINI_API_KEY")
+
     genai.configure(api_key=api_key)
 
-    model = genai.GenerativeModel("gemini-1.5-flash")
-
-    prompt = "\n".join(
-        f"{m['role'].upper()}: {m['content']}" for m in context
+    # ✅ ใช้โมเดลเดียวกับ non-stream
+    model = genai.GenerativeModel(
+        "gemini-2.5-flash",
+        system_instruction=SYSTEM_INSTRUCTION
+        + "\n\nIMPORTANT: Always respond in GitHub-flavored Markdown."
+        + "\n- Use bullet points for summaries"
+        + "\n- Use fenced code blocks ```python for code"
     )
+
+    transcript = [f"(Audience level: {level})"]
+    for m in messages[-20:]:
+        role = m.get("role", "user")
+        content = m.get("content", "")
+        if role == "user":
+            transcript.append(f"User: {content}")
+        else:
+            transcript.append(f"Assistant: {content}")
+    prompt = "\n".join(transcript) + "\nAssistant:"
 
     stream = model.generate_content(prompt, stream=True)
     for chunk in stream:
-        if chunk.text:
+        if getattr(chunk, "text", None):
             yield chunk.text

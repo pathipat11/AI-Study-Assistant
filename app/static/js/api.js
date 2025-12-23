@@ -60,3 +60,18 @@ export async function apiRegenerate(sessionId) {
     if (!res.ok) throw new Error(data.error || "Regenerate failed");
     return data;
 }
+
+export async function apiRegenerateStream(sessionId) {
+    const res = await fetch(`/api/sessions/${sessionId}/regenerate/stream`, {
+        method: "POST",
+    });
+    if (!res.ok) {
+        let msg = "Regenerate failed";
+        try {
+            const data = await res.json();
+            msg = data.error || msg;
+        } catch { }
+        throw new Error(msg);
+    }
+    return res;
+}

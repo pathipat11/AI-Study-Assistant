@@ -16,22 +16,40 @@ export function scrollChatBottom() {
 }
 
 // ===== Markdown renderer =====
-function renderAssistantMarkdown(text) {
-    const html = marked.parse(text || "", { breaks: true });
-    const clean = DOMPurify.sanitize(html);
-
+function renderAssistantMarkdown(text, { streaming = false } = {}) {
     const container = document.createElement("div");
     container.className = "chatgpt-md";
+
+    // ✅ ระหว่าง stream: อย่า parse markdown (กัน fence ยังไม่ปิดแล้วเพี้ยน)
+    if (streaming) {
+        container.textContent = text || "";
+        return container;
+    }
+
+    const hasMarked = typeof window.marked !== "undefined";
+    const hasPurify = typeof window.DOMPurify !== "undefined";
+
+    if (!hasMarked || !hasPurify) {
+        container.textContent = text || "";
+        return container;
+    }
+
+    const html = window.marked.parse(text || "", { breaks: true });
+    const clean = window.DOMPurify.sanitize(html);
     container.innerHTML = clean;
 
     container.querySelectorAll("pre").forEach((pre) => {
-        const btn = document.createElement("button");
-        btn.textContent = "Copy";
-        btn.className =
-            "absolute top-2 right-2 text-xs px-2 py-1 rounded bg-slate-700 text-white hover:bg-slate-600";
+        const codeEl = pre.querySelector("code");
+        if (codeEl && typeof window.hljs !== "undefined") {
+            window.hljs.highlightElement(codeEl);
+        }
 
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = "Copy";
+        btn.className = "md-copy absolute top-2 right-2 text-xs px-2 py-1 rounded-lg";
         btn.onclick = () => {
-            const code = pre.innerText;
+            const code = codeEl ? codeEl.innerText : pre.innerText;
             navigator.clipboard.writeText(code);
             btn.textContent = "Copied";
             setTimeout(() => (btn.textContent = "Copy"), 1500);
@@ -41,9 +59,11 @@ function renderAssistantMarkdown(text) {
         pre.appendChild(btn);
     });
 
-
     return container;
 }
+
+
+
 
 export function renderChat() {
     const chat = qs("chat");
@@ -70,9 +90,17 @@ export function renderChat() {
                 "max-w-[70%] rounded-2xl px-6 py-4 " +
                 "bg-white dark:bg-slate-900 shadow-sm";
 
-            bubble.appendChild(renderAssistantMarkdown(m.content));
+            const content = renderAssistantMarkdown(m.content, { streaming: !!m.streaming });
+            bubble.appendChild(content);
 
-            if (isLastAssistant(idx)) {
+            if (m.streaming) {
+                const cursor = document.createElement("span");
+                cursor.textContent = "▍";
+                cursor.className = "animate-pulse ml-1 text-slate-400";
+                bubble.appendChild(cursor);
+            }
+
+            if (isLastAssistant(idx) && !m.streaming) {
                 const actions = document.createElement("div");
                 actions.className = "mt-3 text-sm text-slate-500";
 
@@ -80,7 +108,7 @@ export function renderChat() {
                 regen.textContent = "🔄 Regenerate";
                 regen.className =
                     "hover:text-indigo-600 dark:hover:text-indigo-400";
-                regen.onclick = () => window.__chat.regenerate();
+                regen.onclick = () => window.__chat.regenerateStream();
 
                 actions.appendChild(regen);
                 bubble.appendChild(actions);
@@ -127,13 +155,30 @@ export function renderSessions() {
         });
 }
 
+function formatDateTime(iso) {
+    const d = new Date(iso);
+    return d.toLocaleString("en-GB", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+    });
+}
+
+
 export function updateHeader() {
-    const s = state.sessions.find(x => String(x.id) === String(state.activeSessionId));
+    const s = state.sessions.find(
+        x => String(x.id) === String(state.activeSessionId)
+    );
+
     qs("activeTitle").textContent = s?.title || "—";
+
     qs("activeMeta").textContent = s?.last_at
-        ? `Last message: ${s.last_at}`
+        ? `Last message: ${formatDateTime(s.last_at)}`
         : `Session ID: ${state.activeSessionId || "—"}`;
 }
+
 
 function isLastAssistant(index) {
     for (let i = state.messages.length - 1; i >= 0; i--) {
