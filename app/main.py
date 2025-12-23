@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, Depends, APIRouter, HTTPException
+from fastapi import FastAPI, Request, Depends, APIRouter, HTTPException, Cookie
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
@@ -7,16 +7,26 @@ from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
 from .db import get_db, SessionLocal
-from .models import ChatSession, ChatMessage
+from .models import ChatSession, ChatMessage, User
 from .init_db import init_db
 from .gemini_client import chat_reply, chat_reply_stream, generate_chat_title
+from .auth import create_access_token, get_current_user
 from .pdf_utils import chat_to_pdf_bytes
+from .rate_limit import rate_limit
+
 
 load_dotenv()
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 templates = Jinja2Templates(directory="app/templates")
+
+def get_session_or_404(db: Session, session_id: int, user_id: int) -> ChatSession:
+    s = db.query(ChatSession).filter(ChatSession.id == session_id, ChatSession.user_id == user_id).first()
+    if not s:
+        raise HTTPException(404, "Session not found")
+    return s
+
 
 @app.on_event("startup")
 def on_startup():
@@ -35,9 +45,10 @@ def home(request: Request):
 
 # 0) list sessions (ล่าสุดขึ้นก่อน)
 @app.get("/api/sessions")
-def list_sessions(db: Session = Depends(get_db)):
+def list_sessions(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     sessions = (
         db.query(ChatSession)
+        .filter(ChatSession.user_id == user.id)
         .order_by(ChatSession.created_at.desc(), ChatSession.id.desc())
         .limit(50)
         .all()
@@ -63,35 +74,29 @@ def list_sessions(db: Session = Depends(get_db)):
 
 # 1) rename session
 @app.patch("/api/sessions/{session_id}")
-def rename_session(session_id: int, payload: dict, db: Session = Depends(get_db)):
+def rename_session(session_id: int, payload: dict, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     title = (payload.get("title") or "").strip()
     if not title:
         return JSONResponse({"error": "Title required"}, status_code=400)
 
-    s = db.query(ChatSession).filter(ChatSession.id == session_id).first()
-    if not s:
-        return JSONResponse({"error": "Session not found"}, status_code=404)
-
+    s = get_session_or_404(db, session_id, user.id)
     s.title = title[:200]
     db.commit()
     return {"ok": True, "id": s.id, "title": s.title}
 
 # 2) delete session (จะลบ messages ตาม cascade)
 @app.delete("/api/sessions/{session_id}")
-def delete_session(session_id: int, db: Session = Depends(get_db)):
-    s = db.query(ChatSession).filter(ChatSession.id == session_id).first()
-    if not s:
-        return JSONResponse({"error": "Session not found"}, status_code=404)
-
+def delete_session(session_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    s = get_session_or_404(db, session_id, user.id)
     db.delete(s)
     db.commit()
     return {"ok": True}
 
 # 1) สร้าง session ใหม่
 @app.post("/api/sessions")
-def create_session(payload: dict, db: Session = Depends(get_db)):
+def create_session(payload: dict, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     title = payload.get("title") or "Study Chat"
-    s = ChatSession(title=title)
+    s = ChatSession(title=title[:200], user_id=user.id)
     db.add(s)
     db.commit()
     db.refresh(s)
@@ -99,7 +104,9 @@ def create_session(payload: dict, db: Session = Depends(get_db)):
 
 # 2) โหลดรายการข้อความของ session
 @app.get("/api/sessions/{session_id}/messages")
-def get_messages(session_id: int, db: Session = Depends(get_db)):
+def get_messages(session_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    get_session_or_404(db, session_id, user.id)
+
     msgs = (
         db.query(ChatMessage)
         .filter(ChatMessage.session_id == session_id)
@@ -113,14 +120,15 @@ def get_messages(session_id: int, db: Session = Depends(get_db)):
 
 # 3) ส่งข้อความ (chat) + บันทึกลง DB
 @app.post("/api/sessions/{session_id}/chat")
-def chat(session_id: int, payload: dict, db: Session = Depends(get_db)):
+def chat(session_id: int, payload: dict, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    rate_limit(user.id, limit=20, window_sec=60)
     user_text = (payload.get("message") or "").strip()
     level = payload.get("level", "beginner")
     if not user_text:
         return JSONResponse({"error": "Empty message"}, status_code=400)
 
     # check session exists
-    s = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    s = get_session_or_404(db, session_id, user.id)
     if not s:
         return JSONResponse({"error": "Session not found"}, status_code=404)
 
@@ -165,7 +173,9 @@ def chat(session_id: int, payload: dict, db: Session = Depends(get_db)):
 
 # 4) Export PDF ทั้งบทสนทนา
 @app.post("/api/sessions/{session_id}/export-pdf")
-def export_pdf(session_id: int, db: Session = Depends(get_db)):
+def export_pdf(session_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    get_session_or_404(db, session_id, user.id)
+
     msgs = (
         db.query(ChatMessage)
         .filter(ChatMessage.session_id == session_id)
@@ -180,11 +190,11 @@ def export_pdf(session_id: int, db: Session = Depends(get_db)):
         headers={"Content-Disposition": 'attachment; filename="study-chat.pdf"'},
     )
 
+
 @app.post("/api/sessions/{session_id}/regenerate")
-def regenerate(session_id: int, db: Session = Depends(get_db)):
-    s = db.query(ChatSession).filter(ChatSession.id == session_id).first()
-    if not s:
-        raise HTTPException(404, "Session not found")
+def regenerate(session_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    get_session_or_404(db, session_id, user.id)
+    rate_limit(user.id, limit=20, window_sec=60)
 
     messages = (
         db.query(ChatMessage)
@@ -214,21 +224,21 @@ def regenerate(session_id: int, db: Session = Depends(get_db)):
     context = [{"role": m.role, "content": m.content} for m in recent]
 
     reply = chat_reply(context, level="beginner")
-
     db.add(ChatMessage(session_id=session_id, role="assistant", content=reply))
     db.commit()
 
     return {"reply": reply}
 
 @app.post("/api/sessions/{session_id}/chat/stream")
-def chat_stream(session_id: int, payload: dict, db: Session = Depends(get_db)):
+def chat_stream(session_id: int, payload: dict, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    rate_limit(user.id, limit=20, window_sec=60)
+
     user_text = (payload.get("message") or "").strip()
     level = payload.get("level", "beginner")
     if not user_text:
         raise HTTPException(400, "Empty message")
 
-    # ✅ validate session + save user msg ด้วย db (อันนี้ทำก่อน stream ได้)
-    s = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    s = get_session_or_404(db, session_id, user.id)
     if not s:
         raise HTTPException(404, "Session not found")
 
@@ -291,7 +301,10 @@ def chat_stream(session_id: int, payload: dict, db: Session = Depends(get_db)):
 
 
 @app.post("/api/sessions/{session_id}/regenerate/stream")
-def regenerate_stream(session_id: int, db: Session = Depends(get_db)):
+def regenerate_stream(session_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    rate_limit(user.id, limit=20, window_sec=60)
+
+    get_session_or_404(db, session_id, user.id)
     s = db.query(ChatSession).filter(ChatSession.id == session_id).first()
     if not s:
         raise HTTPException(404, "Session not found")
@@ -336,7 +349,7 @@ def regenerate_stream(session_id: int, db: Session = Depends(get_db)):
             try:
                 # ลบ assistant เก่าล่าสุด (ถ้ามี)
                 if last_assistant:
-                    obj = db2.query(ChatMessage).filter(ChatMessage.id == last_assistant.id).first()
+                    obj = db2.query(ChatSession).filter(ChatSession.id == session_id, ChatSession.user_id == user.id).first()
                     if obj:
                         db2.delete(obj)
                         db2.flush()
@@ -360,3 +373,39 @@ def regenerate_stream(session_id: int, db: Session = Depends(get_db)):
             "X-Accel-Buffering": "no",
         },
     )
+
+@app.post("/api/auth/login")
+def login(payload: dict, db: Session = Depends(get_db)):
+    email = (payload.get("email") or "").strip().lower()
+    if not email:
+        return JSONResponse({"error": "Email required"}, status_code=400)
+
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        user = User(email=email, provider="email")
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+    token = create_access_token(user.id)
+
+    resp = JSONResponse({"ok": True, "user": {"id": user.id, "email": user.email}})
+    resp.set_cookie(
+        "access_token",
+        token,
+        httponly=True,
+        samesite="lax",
+        secure=False,   # prod เปลี่ยน True (https)
+        max_age=60 * 60 * 24 * 30,
+    )
+    return resp
+
+@app.get("/api/auth/me")
+def me(user: User = Depends(get_current_user)):
+    return {"id": user.id, "email": user.email, "name": user.name, "provider": user.provider}
+
+@app.post("/api/auth/logout")
+def logout():
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie("access_token")
+    return resp
