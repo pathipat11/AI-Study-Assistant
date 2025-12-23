@@ -6,6 +6,7 @@ import {
     apiRenameSession,
     apiDeleteSession,
     apiExportPdf,
+    apiRegenerate,
 } from "./api.js";
 
 import { state, setActiveSessionId, clearActiveSessionId } from "./state.js";
@@ -203,6 +204,41 @@ function bindEvents() {
     });
 }
 
+
+/* -------------------------
+ * Regenerate last assistant message
+ * ------------------------- */
+
+async function regenerate() {
+    if (!state.activeSessionId) return;
+
+    setStatus("Regenerating...");
+
+    // ลบ assistant ล่าสุดจาก state
+    for (let i = state.messages.length - 1; i >= 0; i--) {
+        if (state.messages[i].role === "assistant") {
+            state.messages.splice(i, 1);
+            break;
+        }
+    }
+    renderChat();
+
+    try {
+        const data = await apiRegenerate(state.activeSessionId);
+
+        state.messages.push({
+            role: "assistant",
+            content: data.reply,
+        });
+
+        renderChat();
+        setStatus("Done ✅");
+    } catch (e) {
+        setStatus("Error: " + e.message);
+    }
+}
+
+
 /* -------------------------
  * Init
  * ------------------------- */
@@ -212,6 +248,7 @@ async function init() {
 
     // sync theme badge (dark/light)
     window.__theme?.updateThemeUI?.();
+    window.__chat = { regenerate };
 
     await refreshSessions();
     await ensureSession();

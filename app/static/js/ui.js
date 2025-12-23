@@ -35,7 +35,7 @@ export function renderChat() {
     const chat = qs("chat");
     chat.innerHTML = "";
 
-    state.messages.forEach((m) => {
+    state.messages.forEach((m, idx) => {
         const wrap = document.createElement("div");
         wrap.className =
             "flex w-full " +
@@ -49,14 +49,28 @@ export function renderChat() {
                 "max-w-[70%] rounded-2xl px-4 py-3 " +
                 "bg-indigo-600 text-white whitespace-pre-wrap";
             bubble.textContent = m.content;
-        } else {
-            // ASSISTANT bubble
+        } 
+        
+        if (m.role === "assistant") {
             bubble.className =
                 "max-w-[70%] rounded-2xl px-6 py-4 " +
-                "bg-white dark:bg-slate-900 " +
-                "shadow-sm";
+                "bg-white dark:bg-slate-900 shadow-sm";
 
             bubble.appendChild(renderAssistantMarkdown(m.content));
+
+            if (isLastAssistant(idx)) {
+                const actions = document.createElement("div");
+                actions.className = "mt-3 text-sm text-slate-500";
+
+                const regen = document.createElement("button");
+                regen.textContent = "🔄 Regenerate";
+                regen.className =
+                    "hover:text-indigo-600 dark:hover:text-indigo-400";
+                regen.onclick = () => window.__chat.regenerate();
+
+                actions.appendChild(regen);
+                bubble.appendChild(actions);
+            }
         }
 
         wrap.appendChild(bubble);
@@ -105,4 +119,13 @@ export function updateHeader() {
     qs("activeMeta").textContent = s?.last_at
         ? `Last message: ${s.last_at}`
         : `Session ID: ${state.activeSessionId || "—"}`;
+}
+
+function isLastAssistant(index) {
+    for (let i = state.messages.length - 1; i >= 0; i--) {
+        if (state.messages[i].role === "assistant") {
+            return i === index;
+        }
+    }
+    return false;
 }

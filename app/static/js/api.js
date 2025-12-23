@@ -51,3 +51,12 @@ export async function apiExportPdf(sessionId) {
     if (!res.ok) throw new Error("Export failed");
     return await res.blob();
 }
+
+export async function apiRegenerate(sessionId) {
+    const res = await fetch(`/api/sessions/${sessionId}/regenerate`, {
+        method: "POST",
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Regenerate failed");
+    return data;
+}

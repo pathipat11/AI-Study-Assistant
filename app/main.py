@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, Depends
+from fastapi import FastAPI, Request, Depends, APIRouter, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
@@ -172,3 +172,43 @@ def export_pdf(session_id: int, db: Session = Depends(get_db)):
         media_type="application/pdf",
         headers={"Content-Disposition": 'attachment; filename="study-chat.pdf"'},
     )
+
+@app.post("/api/sessions/{session_id}/regenerate")
+def regenerate(session_id: int, db: Session = Depends(get_db)):
+    s = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    if not s:
+        raise HTTPException(404, "Session not found")
+
+    messages = (
+        db.query(ChatMessage)
+        .filter(ChatMessage.session_id == session_id)
+        .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+        .all()
+    )
+
+    last_user = next((m for m in messages if m.role == "user"), None)
+    last_assistant = next((m for m in messages if m.role == "assistant"), None)
+
+    if not last_user:
+        raise HTTPException(400, "No user message to regenerate")
+
+    if last_assistant:
+        db.delete(last_assistant)
+        db.commit()
+
+    recent = (
+        db.query(ChatMessage)
+        .filter(ChatMessage.session_id == session_id)
+        .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+        .limit(20)
+        .all()
+    )
+    recent = list(reversed(recent))
+    context = [{"role": m.role, "content": m.content} for m in recent]
+
+    reply = chat_reply(context, level="beginner")
+
+    db.add(ChatMessage(session_id=session_id, role="assistant", content=reply))
+    db.commit()
+
+    return {"reply": reply}
