@@ -15,23 +15,51 @@ export function scrollChatBottom() {
     chat.scrollTop = chat.scrollHeight;
 }
 
+// ===== Markdown renderer =====
+function renderAssistantMarkdown(text) {
+    const html = marked.parse(text || "", { breaks: true });
+    const clean = DOMPurify.sanitize(html);
+
+    const container = document.createElement("div");
+    container.className = "chatgpt-md";
+    container.innerHTML = clean;
+
+    container.querySelectorAll("pre code").forEach((block) => {
+        hljs.highlightElement(block);
+    });
+
+    return container;
+}
+
 export function renderChat() {
     const chat = qs("chat");
     chat.innerHTML = "";
 
     state.messages.forEach((m) => {
         const wrap = document.createElement("div");
-        wrap.className = "flex " + (m.role === "user" ? "justify-end" : "justify-start");
+        wrap.className =
+            "flex w-full " +
+            (m.role === "user" ? "justify-end" : "justify-start");
 
-        const b = document.createElement("div");
-        b.className =
-            "max-w-[85%] rounded-2xl px-4 py-3 whitespace-pre-wrap leading-relaxed border " +
-            (m.role === "user"
-                ? "bg-indigo-600 text-white border-indigo-600"
-                : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100");
-        b.textContent = m.content;
+        const bubble = document.createElement("div");
 
-        wrap.appendChild(b);
+        if (m.role === "user") {
+            // USER bubble (เหมือน ChatGPT)
+            bubble.className =
+                "max-w-[70%] rounded-2xl px-4 py-3 " +
+                "bg-indigo-600 text-white whitespace-pre-wrap";
+            bubble.textContent = m.content;
+        } else {
+            // ASSISTANT bubble
+            bubble.className =
+                "max-w-[70%] rounded-2xl px-6 py-4 " +
+                "bg-white dark:bg-slate-900 " +
+                "shadow-sm";
+
+            bubble.appendChild(renderAssistantMarkdown(m.content));
+        }
+
+        wrap.appendChild(bubble);
         chat.appendChild(wrap);
     });
 
@@ -43,42 +71,38 @@ export function renderSessions() {
     const search = (qs("search").value || "").toLowerCase();
 
     sessionsEl.innerHTML = "";
-    const filtered = state.sessions.filter((s) => {
-        const t = (s.title || "").toLowerCase();
-        const p = (s.last_preview || "").toLowerCase();
-        return !search || t.includes(search) || p.includes(search);
-    });
+    state.sessions
+        .filter(s =>
+            !search ||
+            (s.title || "").toLowerCase().includes(search) ||
+            (s.last_preview || "").toLowerCase().includes(search)
+        )
+        .forEach((s) => {
+            const isActive = String(s.id) === String(state.activeSessionId);
 
-    filtered.forEach((s) => {
-        const isActive = String(s.id) === String(state.activeSessionId);
+            const item = document.createElement("button");
+            item.className =
+                "w-full text-left rounded-2xl p-3 mb-2 border " +
+                (isActive
+                    ? "border-indigo-500 bg-indigo-500/10"
+                    : "border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950");
+            item.dataset.sessionId = s.id;
 
-        const item = document.createElement("button");
-        item.className =
-            "w-full text-left rounded-2xl p-3 mb-2 border " +
-            (isActive
-                ? "border-indigo-500 bg-indigo-500/10"
-                : "border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 hover:bg-slate-100 dark:hover:bg-slate-900");
-        item.dataset.sessionId = s.id;
+            item.innerHTML = `
+        <div class="font-semibold truncate">${s.title || `Session #${s.id}`}</div>
+        <div class="text-xs text-slate-500 dark:text-slate-400 mt-1">
+          ${s.last_preview || "—"}
+        </div>
+      `;
 
-        const title = document.createElement("div");
-        title.className = "font-semibold truncate";
-        title.textContent = s.title || `Session #${s.id}`;
-
-        const preview = document.createElement("div");
-        preview.className = "text-xs text-slate-500 dark:text-slate-400 mt-1";
-        preview.textContent = s.last_preview || "—";
-
-        item.appendChild(title);
-        item.appendChild(preview);
-        sessionsEl.appendChild(item);
-    });
+            sessionsEl.appendChild(item);
+        });
 }
 
 export function updateHeader() {
-    const activeTitleEl = document.getElementById("activeTitle");
-    const activeMetaEl = document.getElementById("activeMeta");
-    const s = state.sessions.find((x) => String(x.id) === String(state.activeSessionId));
-
-    if (activeTitleEl) activeTitleEl.textContent = s?.title || "—";
-    if (activeMetaEl) activeMetaEl.textContent = s?.last_at ? `Last message: ${s.last_at}` : `Session ID: ${state.activeSessionId || "—"}`;
+    const s = state.sessions.find(x => String(x.id) === String(state.activeSessionId));
+    qs("activeTitle").textContent = s?.title || "—";
+    qs("activeMeta").textContent = s?.last_at
+        ? `Last message: ${s.last_at}`
+        : `Session ID: ${state.activeSessionId || "—"}`;
 }

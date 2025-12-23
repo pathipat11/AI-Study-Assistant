@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from .db import get_db
 from .models import ChatSession, ChatMessage
 from .init_db import init_db
-from .gemini_client import chat_reply
+from .gemini_client import chat_reply, generate_chat_title
 from .pdf_utils import chat_to_pdf_bytes
 
 load_dotenv()
@@ -120,6 +120,21 @@ def chat(session_id: int, payload: dict, db: Session = Depends(get_db)):
     # save user msg
     db.add(ChatMessage(session_id=session_id, role="user", content=user_text))
     db.commit()
+    
+    # ✅ Auto-title: ถ้าเป็นข้อความแรกของห้อง และ title ยังเป็นค่า default
+    DEFAULT_TITLES = {"New Chat", "Study Chat"}
+    total = db.query(ChatMessage).filter(ChatMessage.session_id == session_id).count()
+
+    if total == 1 and (s.title in DEFAULT_TITLES):
+        try:
+            new_title = generate_chat_title(user_text)
+            s.title = new_title[:200]
+            db.commit()
+        except Exception:
+            # ไม่ให้พังทั้งระบบถ้า gen title fail
+            db.rollback()
+            pass
+
 
     # fetch recent messages for context (last 20)
     recent = (
@@ -139,7 +154,7 @@ def chat(session_id: int, payload: dict, db: Session = Depends(get_db)):
     db.add(ChatMessage(session_id=session_id, role="assistant", content=answer))
     db.commit()
 
-    return {"reply": answer}
+    return {"reply": answer, "session_title": s.title}
 
 # 4) Export PDF ทั้งบทสนทนา
 @app.post("/api/sessions/{session_id}/export-pdf")

@@ -32,3 +32,24 @@ def chat_reply(messages: list[dict], level: str = "beginner") -> str:
     prompt = "\n".join(transcript) + "\nAssistant:"
     resp = model.generate_content(prompt)
     return (resp.text or "").strip()
+
+def generate_chat_title(first_user_message: str) -> str:
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError("Missing GEMINI_API_KEY in environment")
+
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel("gemini-2.5-flash")
+
+    prompt = f"""
+Create a short chat session title (3-6 words) based on the user's first message.
+Return ONLY the title text. No quotes. No emoji.
+
+User message: {first_user_message}
+"""
+    resp = model.generate_content(prompt)
+    title = (resp.text or "").strip()
+
+    # กันพลาด: ตัดบรรทัด/ตัดยาว
+    title = title.splitlines()[0].strip()
+    return title[:60] or "Study Chat"
