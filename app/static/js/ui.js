@@ -24,9 +24,23 @@ function renderAssistantMarkdown(text) {
     container.className = "chatgpt-md";
     container.innerHTML = clean;
 
-    container.querySelectorAll("pre code").forEach((block) => {
-        hljs.highlightElement(block);
+    container.querySelectorAll("pre").forEach((pre) => {
+        const btn = document.createElement("button");
+        btn.textContent = "Copy";
+        btn.className =
+            "absolute top-2 right-2 text-xs px-2 py-1 rounded bg-slate-700 text-white hover:bg-slate-600";
+
+        btn.onclick = () => {
+            const code = pre.innerText;
+            navigator.clipboard.writeText(code);
+            btn.textContent = "Copied";
+            setTimeout(() => (btn.textContent = "Copy"), 1500);
+        };
+
+        pre.style.position = "relative";
+        pre.appendChild(btn);
     });
+
 
     return container;
 }
@@ -49,8 +63,8 @@ export function renderChat() {
                 "max-w-[70%] rounded-2xl px-4 py-3 " +
                 "bg-indigo-600 text-white whitespace-pre-wrap";
             bubble.textContent = m.content;
-        } 
-        
+        }
+
         if (m.role === "assistant") {
             bubble.className =
                 "max-w-[70%] rounded-2xl px-6 py-4 " +

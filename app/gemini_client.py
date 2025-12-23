@@ -53,3 +53,18 @@ User message: {first_user_message}
     # กันพลาด: ตัดบรรทัด/ตัดยาว
     title = title.splitlines()[0].strip()
     return title[:60] or "Study Chat"
+
+def chat_reply_stream(context, level="beginner"):
+    api_key = os.getenv("GEMINI_API_KEY")
+    genai.configure(api_key=api_key)
+
+    model = genai.GenerativeModel("gemini-1.5-flash")
+
+    prompt = "\n".join(
+        f"{m['role'].upper()}: {m['content']}" for m in context
+    )
+
+    stream = model.generate_content(prompt, stream=True)
+    for chunk in stream:
+        if chunk.text:
+            yield chunk.text

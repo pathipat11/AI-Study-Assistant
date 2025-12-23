@@ -182,7 +182,7 @@ function copyChat() {
  * Event bindings
  * ------------------------- */
 function bindEvents() {
-    qs("btnSend").addEventListener("click", sendMessage);
+    qs("btnSend").addEventListener("click", sendMessageStream);
     qs("msg").addEventListener("keydown", (e) => {
         if (e.key === "Enter") sendMessage();
     });
@@ -236,6 +236,49 @@ async function regenerate() {
     } catch (e) {
         setStatus("Error: " + e.message);
     }
+}
+
+async function sendMessageStream() {
+    const input = qs("msg");
+    const text = input.value.trim();
+    if (!text) return;
+
+    await ensureSession();
+    input.value = "";
+
+    // user bubble
+    state.messages.push({ role: "user", content: text });
+    renderChat();
+
+    // assistant placeholder
+    const assistant = { role: "assistant", content: "" };
+    state.messages.push(assistant);
+    renderChat();
+
+    setStatus("Thinking...");
+
+    const res = await fetch(
+        `/api/sessions/${state.activeSessionId}/chat/stream`,
+        {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: text, level: qs("level").value }),
+        }
+    );
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+
+    while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value);
+        assistant.content += chunk.replace(/^data:\s?/gm, "");
+        renderChat();
+    }
+
+    setStatus("Done ✅");
 }
 
 

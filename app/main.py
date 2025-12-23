@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Request, Depends, APIRouter, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from .db import get_db
 from .models import ChatSession, ChatMessage
 from .init_db import init_db
-from .gemini_client import chat_reply, generate_chat_title
+from .gemini_client import chat_reply, chat_reply_stream, generate_chat_title
 from .pdf_utils import chat_to_pdf_bytes
 
 load_dotenv()
@@ -212,3 +212,41 @@ def regenerate(session_id: int, db: Session = Depends(get_db)):
     db.commit()
 
     return {"reply": reply}
+
+@app.post("/api/sessions/{session_id}/chat/stream")
+def chat_stream(session_id: int, payload: dict, db: Session = Depends(get_db)):
+    user_text = (payload.get("message") or "").strip()
+    level = payload.get("level", "beginner")
+
+    if not user_text:
+        raise HTTPException(400, "Empty message")
+
+    s = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    if not s:
+        raise HTTPException(404, "Session not found")
+
+    # save user message
+    db.add(ChatMessage(session_id=session_id, role="user", content=user_text))
+    db.commit()
+
+    # context
+    recent = (
+        db.query(ChatMessage)
+        .filter(ChatMessage.session_id == session_id)
+        .order_by(ChatMessage.created_at.desc())
+        .limit(20)
+        .all()
+    )
+    recent = list(reversed(recent))
+    context = [{"role": m.role, "content": m.content} for m in recent]
+
+    def event_generator():
+        full = ""
+        for chunk in chat_reply_stream(context, level):
+            full += chunk
+            yield f"data: {chunk}\n\n"
+        # save assistant message after stream end
+        db.add(ChatMessage(session_id=session_id, role="assistant", content=full))
+        db.commit()
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")

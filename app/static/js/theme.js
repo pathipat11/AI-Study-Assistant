@@ -19,10 +19,15 @@
         if (btn) btn.setAttribute("aria-pressed", mode === "dark" ? "true" : "false");
     }
 
+    function updateHighlightTheme(mode) {
+        document.documentElement.dataset.theme = mode;
+    }
+
     function toggleTheme() {
         const next = getSavedTheme() === "dark" ? "light" : "dark";
         localStorage.setItem(THEME_KEY, next);
         applyTheme(next);
+        updateHighlightTheme(next);
         updateThemeUI();
     }
 
