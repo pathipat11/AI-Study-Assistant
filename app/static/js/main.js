@@ -155,6 +155,22 @@ function bindEvents() {
         }
     });
 
+    qs("level").addEventListener("change", async (e) => {
+        if (!state.activeSessionId) return;
+
+        const level = e.target.value;
+
+        await fetch(`/api/sessions/${state.activeSessionId}/level`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ level }),
+        });
+
+        state.activeLevel = level;
+        setStatus(`Level set to ${level} 🧠`);
+    });
+
+
     /* ===== Top / toolbar ===== */
     qs("btnNew").addEventListener("click", createNewSession);
     qs("btnCopy").addEventListener("click", copyChat);

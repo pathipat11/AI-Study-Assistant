@@ -4,6 +4,7 @@ export const state = {
     activeSessionId: localStorage.getItem(SESSION_KEY),
     sessions: [],
     messages: [],
+    activeLevel: "beginner",
 };
 
 export function setActiveSessionId(id) {

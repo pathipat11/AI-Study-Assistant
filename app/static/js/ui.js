@@ -286,6 +286,11 @@ export function updateHeader() {
         x => String(x.id) === String(state.activeSessionId)
     );
 
+    if (s?.level) {
+        state.activeLevel = s.level;
+        qs("level").value = s.level;
+    }
+
     qs("activeTitle").textContent = s?.title || "—";
 
     qs("activeMeta").textContent = s?.last_at

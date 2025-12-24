@@ -55,6 +55,7 @@ def list_sessions(db: Session = Depends(get_db)):
         result.append({
             "id": s.id,
             "title": s.title,
+            "level": s.level,
             "created_at": s.created_at.isoformat() if s.created_at else None,
             "last_preview": (last.content[:80] + "…") if last and len(last.content) > 80 else (last.content if last else ""),
             "last_at": last.created_at.isoformat() if last and last.created_at else None,
@@ -91,11 +92,16 @@ def delete_session(session_id: int, db: Session = Depends(get_db)):
 @app.post("/api/sessions")
 def create_session(payload: dict, db: Session = Depends(get_db)):
     title = payload.get("title") or "Study Chat"
-    s = ChatSession(title=title)
+    level = payload.get("level", "beginner")
+    s = ChatSession(title=title, level=level)
     db.add(s)
     db.commit()
     db.refresh(s)
-    return {"session_id": s.id, "title": s.title}
+    return {
+        "session_id": s.id,
+        "title": s.title,
+        "level": s.level,
+    }
 
 # 2) โหลดรายการข้อความของ session
 @app.get("/api/sessions/{session_id}/messages")
@@ -223,19 +229,22 @@ def regenerate(session_id: int, db: Session = Depends(get_db)):
 @app.post("/api/sessions/{session_id}/chat/stream")
 def chat_stream(session_id: int, payload: dict, db: Session = Depends(get_db)):
     user_text = (payload.get("message") or "").strip()
-    level = payload.get("level", "beginner")
     if not user_text:
         raise HTTPException(400, "Empty message")
 
-    # ✅ validate session + save user msg ด้วย db (อันนี้ทำก่อน stream ได้)
+    # ✅ query session ก่อน
     s = db.query(ChatSession).filter(ChatSession.id == session_id).first()
     if not s:
         raise HTTPException(404, "Session not found")
 
+    # ✅ level ใช้ของ session เป็น default
+    level = (payload.get("level") or s.level or "beginner").strip()
+
+    # ✅ save user msg
     db.add(ChatMessage(session_id=session_id, role="user", content=user_text))
     db.commit()
 
-    # ✅ context (ทำก่อน stream)
+    # ✅ context
     recent = (
         db.query(ChatMessage)
         .filter(ChatMessage.session_id == session_id)
@@ -246,7 +255,7 @@ def chat_stream(session_id: int, payload: dict, db: Session = Depends(get_db)):
     recent = list(reversed(recent))
     context = [{"role": m.role, "content": m.content} for m in recent]
 
-    # ✅ auto-title สำหรับ stream: ถ้าเป็นข้อความแรกของห้อง และ title ยัง default
+    # ✅ auto-title (เหมือนเดิม)
     DEFAULT_TITLES = {"New Chat", "Study Chat"}
     try:
         total = db.query(ChatMessage).filter(ChatMessage.session_id == session_id).count()
@@ -264,9 +273,8 @@ def chat_stream(session_id: int, payload: dict, db: Session = Depends(get_db)):
                 if not chunk:
                     continue
                 full += chunk
-                yield sse_data(chunk)  # ✅ prefix data: ทุกบรรทัด + จบ event ด้วย blank line
+                yield sse_data(chunk)
 
-            # ✅ สำคัญ: ใช้ Session ใหม่ตอนบันทึก (ห้ามใช้ db เดิมใน generator)
             db2 = SessionLocal()
             try:
                 db2.add(ChatMessage(session_id=session_id, role="assistant", content=full))
@@ -276,7 +284,6 @@ def chat_stream(session_id: int, payload: dict, db: Session = Depends(get_db)):
 
             yield "event: done\ndata: ok\n\n"
         except Exception as e:
-            # ✅ stream error ก็ส่ง event: error ไปให้ฝั่งหน้าเว็บรู้
             yield f"event: error\ndata: {str(e)}\n\n"
 
     return StreamingResponse(
@@ -360,3 +367,17 @@ def regenerate_stream(session_id: int, db: Session = Depends(get_db)):
             "X-Accel-Buffering": "no",
         },
     )
+
+@app.patch("/api/sessions/{session_id}/level")
+def update_session_level(session_id: int, payload: dict, db: Session = Depends(get_db)):
+    level = payload.get("level")
+    if level not in {"beginner", "intermediate", "advanced"}:
+        raise HTTPException(400, "Invalid level")
+
+    s = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    if not s:
+        raise HTTPException(404, "Session not found")
+
+    s.level = level
+    db.commit()
+    return {"ok": True, "level": s.level}

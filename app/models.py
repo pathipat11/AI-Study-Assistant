@@ -7,6 +7,7 @@ class ChatSession(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String(200), default="Study Chat")
+    level = Column(String(20), nullable=False, default="beginner")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     messages = relationship("ChatMessage", back_populates="session", cascade="all, delete-orphan")
