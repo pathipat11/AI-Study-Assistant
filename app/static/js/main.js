@@ -145,17 +145,32 @@ function copyChat() {
  * Event bindings
  * ------------------------- */
 function bindEvents() {
+    /* ===== Chat send ===== */
+    qs("btnSend").addEventListener("click", sendMessageStream);
+
+    qs("msg").addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            sendMessageStream();
+        }
+    });
+
+    /* ===== Top / toolbar ===== */
+    qs("btnNew").addEventListener("click", createNewSession);
+    qs("btnCopy").addEventListener("click", copyChat);
+    qs("btnPdf").addEventListener("click", exportPdf);
+    qs("search").addEventListener("input", renderSessions);
+
+    /* ===== Sidebar sessions (ChatGPT-style) ===== */
     qs("sessions").addEventListener("click", (e) => {
         const menuBtn = e.target.closest('[data-action="menu"]');
         const renameBtn = e.target.closest('[data-action="rename"]');
         const deleteBtn = e.target.closest('[data-action="delete"]');
         const item = e.target.closest('[data-session-id]');
-
         if (!item) return;
 
         const sessionId = item.dataset.sessionId;
 
-        // 1️⃣ กด ⋯ → toggle menu
         if (menuBtn) {
             e.stopPropagation();
             const menu = item.querySelector("[data-menu]");
@@ -163,7 +178,6 @@ function bindEvents() {
             return;
         }
 
-        // 2️⃣ Rename
         if (renameBtn) {
             e.stopPropagation();
             setActiveSessionId(sessionId);
@@ -171,7 +185,6 @@ function bindEvents() {
             return;
         }
 
-        // 3️⃣ Delete
         if (deleteBtn) {
             e.stopPropagation();
             setActiveSessionId(sessionId);
@@ -179,10 +192,10 @@ function bindEvents() {
             return;
         }
 
-        // 4️⃣ คลิกพื้นที่อื่น = switch ห้อง
         switchSession(sessionId);
     });
 }
+
 
 document.addEventListener("click", () => {
     document
