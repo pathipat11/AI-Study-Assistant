@@ -7,6 +7,24 @@ You explain clearly, step-by-step when needed, and provide short examples.
 If the user asks for code, provide Python code with comments.
 """
 
+LEVEL_INSTRUCTION = {
+    "beginner": """
+Explain concepts simply.
+Avoid jargon.
+Use analogies and step-by-step explanations.
+""",
+    "intermediate": """
+Explain clearly with correct terminology.
+Assume basic programming knowledge.
+Give short examples.
+""",
+    "advanced": """
+Be concise and technical.
+Assume strong background.
+Focus on edge cases, performance, and best practices.
+"""
+}
+
 def chat_reply(messages: list[dict], level: str = "beginner") -> str:
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
@@ -61,13 +79,14 @@ def chat_reply_stream(messages: list[dict], level: str = "beginner"):
 
     genai.configure(api_key=api_key)
 
-    # ✅ ใช้โมเดลเดียวกับ non-stream
     model = genai.GenerativeModel(
         "gemini-2.5-flash",
-        system_instruction=SYSTEM_INSTRUCTION
-        + "\n\nIMPORTANT: Always respond in GitHub-flavored Markdown."
-        + "\n- Use bullet points for summaries"
-        + "\n- Use fenced code blocks ```python for code"
+        system_instruction=(
+            SYSTEM_INSTRUCTION
+            + "\n\nAudience instruction:\n"
+            + LEVEL_INSTRUCTION.get(level, LEVEL_INSTRUCTION["beginner"])
+            + "\n\nIMPORTANT: Always respond in GitHub-flavored Markdown."
+        )
     )
 
     transcript = [f"(Audience level: {level})"]
